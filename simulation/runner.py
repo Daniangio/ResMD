@@ -1,9 +1,12 @@
 # simulation/runner.py
 
+import os
 import openmm as mm
 from openmm import app, unit
 from mdareporter import MDAReporter
 from .reporters import VelocityReporter
+from .integrators import create_integrator
+
 
 class SimulationRunner:
     """
@@ -51,12 +54,15 @@ class SimulationRunner:
         self.modeller = app.Modeller(pdb.topology, pdb.positions)
         forcefield = app.ForceField('amber14-all.xml', 'amber14/tip3pfb.xml')
 
-        solvated_pdb_output = self.config.get('solvated_pdb_output', None)
-        if isinstance(solvated_pdb_output, str):
+        solvate = self.config.get('solvate', False)
+        if solvate:
             print("  > Adding solvent...")
             self.modeller.addSolvent(forcefield, model='tip3p', padding=1.0 * unit.nanometer)
-            print(f"  > Saving solvated system to {solvated_pdb_output}...")
-            with open(solvated_pdb_output, 'w') as f:
+            pdb_input_file = self.config['pdb_input_file']
+            base, ext = os.path.splitext(pdb_input_file)
+            pdb_solvated_file = f"{base}_solvated{ext}"
+            print(f"  > Saving solvated system to {pdb_solvated_file}...")
+            with open(pdb_solvated_file, 'w') as f:
                 app.PDBFile.writeFile(self.modeller.topology, self.modeller.positions, f)
 
         self.system = forcefield.createSystem(self.modeller.topology, nonbondedMethod=app.PME,
@@ -69,8 +75,15 @@ class SimulationRunner:
     def _create_simulation(self):
         """Creates the OpenMM Simulation object."""
         print("  > Creating simulation object...")
-        integrator = mm.LangevinIntegrator(self.temperature, self.friction_coeff, self.time_step)
-        
+
+        integrator_kind = self.config.get("integrator", "langevin")
+        integrator = create_integrator(
+            integrator_kind,
+            self.temperature,
+            self.friction_coeff,
+            self.time_step,
+        )
+
         try:
             platform = mm.Platform.getPlatformByName(self.platform_name)
         except Exception:
@@ -78,9 +91,12 @@ class SimulationRunner:
             platform = mm.Platform.getPlatformByName('CPU')
             self.platform_properties = None
 
-        self.simulation = app.Simulation(self.modeller.topology, self.system, integrator, platform, self.platform_properties)
+        self.simulation = app.Simulation(
+            self.modeller.topology, self.system, integrator, platform, self.platform_properties
+        )
         self.simulation.context.setPositions(self.modeller.positions)
-
+        self.simulation.context.setParameter("time", 0.0)  # initialize
+    
     def _add_reporters(self, total_steps):
         """Creates and adds all configured reporters to the simulation."""
         print("  > Adding reporters...")
@@ -110,7 +126,7 @@ class SimulationRunner:
             ))
 
     def run(self):
-        """Executes the full simulation workflow."""
+        """Executes the full simulation workflow with optional chunked stepping and callbacks."""
         self._setup_system()
         self._create_simulation()
 
@@ -119,35 +135,42 @@ class SimulationRunner:
         
         print("  > Equilibrating system...")
         self.simulation.context.setVelocitiesToTemperature(self.temperature)
-        equilibration_steps = self.config.get('equilibration_steps', 10000)
+        equilibration_steps = self.config.get("equilibration_steps", 10000)
         self.simulation.step(equilibration_steps)
 
         # --- Production Run ---
-        simulation_time_ps = self.config.get('simulation_time_ps', 1000)
+        simulation_time_ps = self.config.get("simulation_time_ps", 1000)
         total_steps = int((simulation_time_ps * unit.picoseconds) / self.time_step)
         
         self._add_reporters(total_steps)
 
         print(f"  > Starting production run for {simulation_time_ps} ps...")
-        update_interval = self.config.get('time_param_update_interval')
 
-        if update_interval is None:
+        step_interval = self.config.get('callbacks_step_interval', None)
+        callbacks = self.config.get("callbacks", [])
+
+        if not step_interval:
+            # Simple run
             self.simulation.step(total_steps)
         else:
-            # Run with manual parameter updates if configured
-            num_chunks = total_steps // update_interval
+            # Chunked stepping with callbacks
+            num_chunks = total_steps // step_interval
+            steps_left = total_steps % step_interval
+
             for i in range(num_chunks):
-                current_time_ps = self.simulation.context.getState().getTime().value_in_unit(unit.picosecond)
-                self.simulation.context.setParameter("time", current_time_ps)
-                if i < num_chunks - 1: self.simulation.step(update_interval)
-                else:
-                    steps_left = total_steps % update_interval
-                    if steps_left > 0: self.simulation.step(steps_left)
+                self.simulation.step(step_interval)
+                for cb in callbacks:
+                    cb(self.simulation, i * step_interval)
+
+            if steps_left > 0:
+                self.simulation.step(steps_left)
+                for cb in callbacks:
+                    cb(self.simulation, total_steps)
 
         # --- Finalize ---
         print("  > Finalizing reporters...")
         for reporter in self.simulation.reporters:
-            if hasattr(reporter, 'finalize'):
+            if hasattr(reporter, "finalize"):
                 reporter.finalize()
 
         print(f"--- Simulation Finished: {self.config.get('name', 'Unnamed')} ---")

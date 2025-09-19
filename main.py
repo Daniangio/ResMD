@@ -13,7 +13,7 @@ from plotting.plotter import Plotter
 # --- Configuration ---
 PDB_INPUT_FILE = 'ala.pdb'
 OUTPUT_DIR = 'output'
-SIMULATION_TIME_PS = 10000
+SIMULATION_TIME_PS = 1000
 FIELD_AMPLITUDE = 100.0
 
 # --- Analysis Function (now part of this script) ---
@@ -51,11 +51,18 @@ def generate_config(job_name, frequency=None):
     config = {
         'name': job_name,
         'pdb_input_file': PDB_INPUT_FILE,
-        'solvated_pdb_output': os.path.join(OUTPUT_DIR, 'solvated.pdb'),
-        'log_output': os.path.join(OUTPUT_DIR, f'{job_name}.log'),
-        'trajectory_output': os.path.join(OUTPUT_DIR, f'{job_name}_traj.dcd'),
-        'simulation_time_ps': SIMULATION_TIME_PS,
+        "integrator": "langevin",   # or "verlet"
+        "solvate": True,
+        "simulation_time_ps": SIMULATION_TIME_PS,
+        "log_output": os.path.join(OUTPUT_DIR, f'{job_name}.log'),
+        "trajectory_output": os.path.join(OUTPUT_DIR, f'{job_name}_traj.dcd'),
+        # "callbacks_step_interval": 100,
+        "callbacks": [
+            lambda sim, step: print(f"Reached step {step}. Simulation time: {sim.context.getParameter('time')}"),
+            lambda sim, step: print(f"Atom coordinates at step {step}: {sim.context.getState(getPositions=True).getPositions(asNumpy=True)}"),
+        ]
     }
+
     if frequency is not None and frequency > 0:
         config['force_generator'] = partial(
             create_oscillating_efield_force,
