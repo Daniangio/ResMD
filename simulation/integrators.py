@@ -71,20 +71,62 @@ class TimeVerletIntegrator(mm.CustomIntegrator):
         self.addUpdateContextState()
 
 
-def create_integrator(kind, temperature, friction, dt):
+# --- INTEGRATOR FOR NON-EQUILIBRIUM SIMULATIONS ---
+class CustomNEMDIntegrator(mm.CustomIntegrator):
+    """
+    A custom Langevin-middle integrator that applies the thermostat
+    only to a specified group of atoms (the solute).
+    """
+    def __init__(self, temperature, friction, dt):
+        temperature = temperature.value_in_unit(unit.kelvin)
+        gamma = friction.value_in_unit(unit.picosecond**-1)
+        dt_ps = dt.value_in_unit(unit.picosecond)
+
+        a = math.exp(-gamma * dt_ps)
+        b = math.sqrt(max(0.0, 1.0 - a * a))
+
+        super().__init__(dt_ps)
+
+        # --- Global variables ---
+        self.addGlobalVariable("a", a)
+        self.addGlobalVariable("b", b)
+        kT = unit.BOLTZMANN_CONSTANT_kB * unit.AVOGADRO_CONSTANT_NA * temperature
+        self.addGlobalVariable("kT", kT)
+        
+        # --- Per-DOF variables ---
+        self.addPerDofVariable("x1", 0)
+        # This is our thermostat switch: 1 for solute, 0 for solvent
+        self.addPerDofVariable("is_thermostatted", 0)
+
+        # --- Integration steps ---
+        self.addComputePerDof("v", "v + dt*f/m")
+        self.addConstrainVelocities()
+        self.addComputePerDof("x", "x + 0.5*dt*v")
+        
+        # --- CONDITIONAL THERMOSTAT STEP ---
+        # If is_thermostatted=1, apply Langevin update.
+        # If is_thermostatted=0, this becomes v=v (no change).
+        self.addComputePerDof("v", "(a*v + b*sqrt(kT/m)*gaussian) * is_thermostatted + v * (1-is_thermostatted)")
+        
+        self.addComputePerDof("x", "x + 0.5*dt*v")
+        self.addComputePerDof("x1", "x")
+        self.addConstrainPositions()
+        self.addComputePerDof("v", "v + (x - x1)/dt")
+
+        # --- Time tracking ---
+        self.addComputeGlobal("time", "time + dt")
+        self.addUpdateContextState()
+
+
+def create_integrator(kind, temperature, friction, dt, **kwargs):
     """
     Factory function for creating integrators with time tracking.
-    Args:
-        kind (str): "langevin" or "verlet" (extendable).
-        temperature (unit.Quantity): temperature for Langevin.
-        friction (unit.Quantity): friction coefficient (1/time).
-        dt (unit.Quantity): timestep.
-    Returns:
-        mm.Integrator
     """
     if kind.lower() == "langevin":
         return TimeLangevinIntegrator(temperature, friction, dt)
     elif kind.lower() == "verlet":
         return TimeVerletIntegrator(dt)
+    elif kind.lower() == "nemd_langevin":
+        return CustomNEMDIntegrator(temperature, friction, dt)
     else:
         raise ValueError(f"Unknown integrator kind: {kind}")

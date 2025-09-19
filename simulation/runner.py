@@ -2,6 +2,7 @@
 
 import os
 import openmm as mm
+from openmm.vec3 import Vec3
 from openmm import app, unit
 from mdareporter import MDAReporter
 from .reporters import VelocityReporter
@@ -77,12 +78,38 @@ class SimulationRunner:
         print("  > Creating simulation object...")
 
         integrator_kind = self.config.get("integrator", "langevin")
+        # Prepare kwargs for the integrator factory
+        integrator_kwargs = {}
+        if integrator_kind.lower() == "nemd_langevin":
+            print("  > Using NEMD integrator: thermostat will be applied to solute only.")
+            solute_indices = [a.index for a in self.modeller.topology.atoms() if a.residue.name != 'HOH']
+            integrator_kwargs["solute_indices"] = solute_indices
+            print(f"  > Found {len(solute_indices)} solute atoms to thermostat.")
+
         integrator = create_integrator(
             integrator_kind,
             self.temperature,
             self.friction_coeff,
             self.time_step,
+            **integrator_kwargs  # Pass extra args like solute_indices
         )
+
+        if integrator_kind.lower() == "nemd_langevin":
+            print("  > Configuring NEMD integrator for solute-only thermostat.")
+            num_particles = self.modeller.topology.getNumAtoms()
+            
+            # 1. Create a list of flags, initialized to 0.0 for all particles (solvent).
+            # The value must be a tuple, hence (0.0,)
+            thermostat_flags = [Vec3(0,0,0)] * num_particles
+            
+            # 2. Find solute indices and set their flags to 1.0.
+            solute_indices = [a.index for a in self.modeller.topology.atoms() if a.residue.name != 'HOH']
+            for i in solute_indices:
+                thermostat_flags[i] = Vec3(1,1,1)
+            
+            # 3. Set the per-DOF variable for ALL particles at once using the list.
+            integrator.setPerDofVariableByName("is_thermostatted", thermostat_flags)
+            print(f"  > Thermostat flags set for {len(solute_indices)} out of {num_particles} particles.")
 
         try:
             platform = mm.Platform.getPlatformByName(self.platform_name)

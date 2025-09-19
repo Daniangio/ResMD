@@ -46,29 +46,36 @@ def analyze_trajectory(topology_file, trajectory_file, plot_output_path):
     print("--- Analysis Complete ---")
 
 # --- Simulation Config Generator ---
-def generate_config(job_name, frequency=None):
+def generate_config(job_name, frequency=None, temperature=300.0):
     """Generates a single, complete simulation configuration dictionary."""
     config = {
         'name': job_name,
         'pdb_input_file': PDB_INPUT_FILE,
-        "integrator": "langevin",   # or "verlet"
+        'temperature_k': temperature,
         "solvate": True,
         "simulation_time_ps": SIMULATION_TIME_PS,
         "log_output": os.path.join(OUTPUT_DIR, f'{job_name}.log'),
         "trajectory_output": os.path.join(OUTPUT_DIR, f'{job_name}_traj.dcd'),
         # "callbacks_step_interval": 100,
-        "callbacks": [
-            lambda sim, step: print(f"Reached step {step}. Simulation time: {sim.context.getParameter('time')}"),
-            lambda sim, step: print(f"Atom coordinates at step {step}: {sim.context.getState(getPositions=True).getPositions(asNumpy=True)}"),
-        ]
+        # "callbacks": [
+        #     lambda sim, step: print(f"Reached step {step}. Simulation time: {sim.context.getParameter('time')}"),
+        #     lambda sim, step: print(f"Atom coordinates at step {step}: {sim.context.getState(getPositions=True).getPositions(asNumpy=True)}"),
+        # ]
     }
 
     if frequency is not None and frequency > 0:
+        print(f"Setting up forced simulation with frequency = {frequency} cm-1")
         config['force_generator'] = partial(
             create_oscillating_efield_force,
             frequency_cm=frequency,
             amplitude_kj_mol_nm_e=FIELD_AMPLITUDE
         )
+        # Use the special integrator for driven simulations
+        config['integrator'] = "nemd_langevin"
+    else:
+        # Use the standard integrator for baseline simulations
+        config['integrator'] = "langevin"
+    
     return config
 
 # --- Main Job Execution Function ---
