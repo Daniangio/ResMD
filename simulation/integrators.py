@@ -123,6 +123,8 @@ def create_integrator(kind, temperature, friction, dt, **kwargs):
     Factory function for creating integrators with time tracking.
     """
     if kind.lower() == "langevin":
+        return mm.LangevinIntegrator(temperature, friction, dt) # TimeLangevinIntegrator(temperature, friction, dt)
+    elif kind.lower() == "time_langevin":
         return TimeLangevinIntegrator(temperature, friction, dt)
     elif kind.lower() == "verlet":
         return TimeVerletIntegrator(dt)

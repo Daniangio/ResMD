@@ -13,7 +13,7 @@ from plotting.plotter import Plotter
 # --- Configuration ---
 PDB_INPUT_FILE = 'ala.pdb'
 OUTPUT_DIR = 'output'
-SIMULATION_TIME_PS = 1000
+SIMULATION_TIME_PS = 10000
 FIELD_AMPLITUDE = 100.0
 
 # --- Analysis Function (now part of this script) ---
@@ -56,6 +56,7 @@ def generate_config(job_name, frequency=None, temperature=300.0):
         "simulation_time_ps": SIMULATION_TIME_PS,
         "log_output": os.path.join(OUTPUT_DIR, f'{job_name}.log'),
         "trajectory_output": os.path.join(OUTPUT_DIR, f'{job_name}_traj.dcd'),
+        "friction_coeff_ps": 2.0,
         # "callbacks_step_interval": 100,
         # "callbacks": [
         #     lambda sim, step: print(f"Reached step {step}. Simulation time: {sim.context.getParameter('time')}"),
@@ -71,7 +72,7 @@ def generate_config(job_name, frequency=None, temperature=300.0):
             amplitude_kj_mol_nm_e=FIELD_AMPLITUDE
         )
         # Use the special integrator for driven simulations
-        config['integrator'] = "nemd_langevin"
+        config['integrator'] = "time_langevin" # "nemd_langevin"
     else:
         # Use the standard integrator for baseline simulations
         config['integrator'] = "langevin"

@@ -122,7 +122,8 @@ class SimulationRunner:
             self.modeller.topology, self.system, integrator, platform, self.platform_properties
         )
         self.simulation.context.setPositions(self.modeller.positions)
-        self.simulation.context.setParameter("time", 0.0)  # initialize
+        try: self.simulation.context.setParameter("time", 0.0)  # initialize
+        except: pass
     
     def _add_reporters(self, total_steps):
         """Creates and adds all configured reporters to the simulation."""
